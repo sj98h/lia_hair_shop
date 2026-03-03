@@ -397,6 +397,15 @@
 
   .cal-day.event { color: var(--white); }
 
+  .cal-day.reservation .cal-day-dot { background: rgba(160,200,255,0.9); }
+
+  .cal-dots {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    justify-content: center;
+  }
+
   .cal-day-dot {
     width: 4px; height: 4px;
     border-radius: 50%;
@@ -661,7 +670,7 @@
 
 <!-- ── HEADER ── -->
 <header>
-  <a href="#hero" class="logo">HAIR<span>·</span>SALON</a>
+  <a href="#hero" class="logo">LIA<span>·</span>Hair</a>
   <nav>
     <a href="#menu">메뉴</a>
     <a href="#calendar-section">캘린더</a>
@@ -733,6 +742,10 @@
         <div class="legend-item">
           <div class="legend-dot" style="background:rgba(201,168,76,0.5)"></div>
           오늘
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:rgba(160,200,255,0.9)"></div>
+          예약
         </div>
       </div>
       <div class="cal-event-info" id="cal-event-info"></div>
@@ -836,11 +849,11 @@
 
 <!-- ── FOOTER ── -->
 <footer>
-  <p>© 2026 Lia Hair · dev by sj98h@naver.com</p>
+  <p>© 2026 Lia Hair · dev by sj98h</a></p>
 </footer>
 
 <!-- ── SCRIPT ── -->
-<script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 // ─────────────────────────────────────────
 // CONFIG — Apps Script URL 여기에 입력하세요
 // ─────────────────────────────────────────
@@ -951,13 +964,40 @@ currentYear = today.getFullYear();
 currentMonth = today.getMonth(); // 0-indexed
 
 async function loadCalendarData() {
-  if (!APPS_SCRIPT_URL) { renderCalendar(); return; }
+  if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('YOUR_SCRIPT_ID')) {
+    loadFallbackCalendar();
+    return;
+  }
   try {
     const res = await fetch(`${APPS_SCRIPT_URL}?action=getCalendar`);
     const data = await res.json();
     calEvents = {};
-    (data.events || []).forEach(e => { calEvents[e.date] = e; });
-  } catch(e) {}
+    (data.events || []).forEach(e => {
+      if (!e.startDate) return;
+      const start = new Date(e.startDate);
+      const end   = e.endDate ? new Date(e.endDate) : new Date(e.startDate);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().slice(0, 10);
+        if (!calEvents[dateStr]) calEvents[dateStr] = [];
+        calEvents[dateStr].push({ type: e.type, title: e.title, time: e.time || null });
+      }
+    });
+  } catch(err) {
+    loadFallbackCalendar();
+    return;
+  }
+  renderCalendar();
+}
+
+function loadFallbackCalendar() {
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, '0');
+  calEvents = {
+    [`${y}-${m}-08`]: [{ title: '봄맞이 20% 할인', type: 'event' }],
+    [`${y}-${m}-15`]: [{ title: '원장님 교육 휴무', type: 'closed' }],
+    [`${y}-${m}-18`]: [{ title: '예약', type: 'reservation', time: '10:00' }, { title: '봄 이벤트', type: 'event' }],
+    [`${y}-${m}-22`]: [{ title: '봄 염색 이벤트', type: 'event' }],
+  };
   renderCalendar();
 }
 
@@ -992,25 +1032,42 @@ function renderCalendar() {
 
     const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const isToday = (year === today.getFullYear() && month === today.getMonth() && d === today.getDate());
-    const eventData = calEvents[dateStr];
+    const eventList = calEvents[dateStr] || [];
 
     if (isToday) el.classList.add('today');
-    if (eventData) {
-      el.classList.add(eventData.type === 'closed' ? 'closed' : 'event');
-    }
+    if (eventList.some(e => e.type === 'closed')) el.classList.add('closed');
 
-    el.innerHTML = `<span class="cal-day-num">${d}</span>${eventData ? '<div class="cal-day-dot"></div>' : ''}`;
-    el.addEventListener('click', () => showEventInfo(dateStr, eventData));
+    // 점 여러개 생성
+    const dotsHtml = eventList.length
+      ? `<div class="cal-dots">${eventList.map(e => {
+          const color = e.type === 'closed' ? 'rgba(255,100,100,0.8)'
+                      : e.type === 'reservation' ? 'rgba(160,200,255,0.9)'
+                      : 'var(--accent)';
+          return `<div class="cal-day-dot" style="background:${color}"></div>`;
+        }).join('')}</div>`
+      : '';
+
+    el.innerHTML = `<span class="cal-day-num">${d}</span>${dotsHtml}`;
+    el.addEventListener('click', () => showEventInfo(dateStr, eventList));
     grid.appendChild(el);
   }
 }
 
-function showEventInfo(dateStr, data) {
+function showEventInfo(dateStr, eventList) {
   const info = document.getElementById('cal-event-info');
-  if (!data) { info.classList.remove('active'); return; }
+  if (!eventList || eventList.length === 0) { info.classList.remove('active'); return; }
   info.classList.add('active');
-  const typeLabel = data.type === 'closed' ? '🔴 휴무일' : '🟡 이벤트';
-  info.innerHTML = `<strong>${typeLabel}</strong> · ${dateStr}<br>${data.title || ''}`;
+  const rows = eventList.map(e => {
+    if (e.type === 'reservation') {
+      const timeStr = e.time ? ` · ${e.time}` : '';
+      return `<div>🔵 <strong>예약됨</strong>${timeStr} · <span style="color:var(--gray-4);font-size:12px;">해당 시간은 예약이 있습니다</span></div>`;
+    } else {
+      const icon = e.type === 'closed' ? '🔴' : '🟡';
+      const label = e.type === 'closed' ? '휴무일' : '이벤트';
+      return `<div>${icon} <strong>${label}</strong> · ${e.title || ''}</div>`;
+    }
+  }).join('<div style="border-top:1px solid rgba(255,255,255,0.06);margin:8px 0;"></div>');
+  info.innerHTML = `<div style="font-size:11px;color:var(--gray-4);font-family:'DM Mono',monospace;letter-spacing:0.1em;margin-bottom:10px;">${dateStr}</div>${rows}`;
 }
 
 function changeMonth(dir) {
@@ -1134,8 +1191,11 @@ loadAll();
       const sheet = ss.getSheetByName('캘린더');
       const rows = sheet.getDataRange().getValues();
       const events = rows.slice(1).filter(r => r[0]).map(r => ({
-        date: Utilities.formatDate(new Date(r[0]), 'Asia/Seoul', 'yyyy-MM-dd'),
-        title: r[1], type: r[2] // 'closed' or 'event'
+        startDate: Utilities.formatDate(new Date(r[0]), 'Asia/Seoul', 'yyyy-MM-dd'),
+        endDate:   r[1] ? Utilities.formatDate(new Date(r[1]), 'Asia/Seoul', 'yyyy-MM-dd') : null,
+        time:      r[2] ? Utilities.formatDate(new Date(r[2]), 'Asia/Seoul', 'HH:mm') : null,
+        title:     r[3],
+        type:      r[4]
       }));
       result = { events };
     }
@@ -1168,10 +1228,5 @@ loadAll();
 
   === 구글 시트 구조 ===
   📄 메뉴 시트:      카테고리 | 메뉴명 | 가격 | 설명
-  📄 캘린더 시트:    날짜 | 제목 | 유형(closed/event)
-  📄 정보 시트:      키 | 값  (phone, address, hours, salonName, kakao)
-  📄 예약:          자동 생성
-
-──────────────────────────────────────── -->
-</body>
-</html>
+  📄 캘린더 시트:    시작날짜 | 종료날짜(선택) | 시작시간(선택) | 제목 | 유형(closed/event/reservation)
+  📄 정보 시트:      키 | 값
